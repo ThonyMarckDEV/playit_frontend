@@ -26,7 +26,6 @@ const TicTacToe = () => {
   // Determine if current user is player 1 (X) or player 2 (O)
   const isCurrentUserPlayer1 = idUsuario === player1.id;
   const currentUserSymbol = isCurrentUserPlayer1 ? 'X' : 'O';
-  const opponentSymbol = isCurrentUserPlayer1 ? 'O' : 'X';
 
   // WebSocket setup
   useEffect(() => {
@@ -48,37 +47,54 @@ const TicTacToe = () => {
     };
 
     websocket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      try {
+        const data = JSON.parse(event.data);
+        console.log('Received WebSocket message:', data); // Debug log
 
-      if (data.type === 'playerData') {
-        setPlayer1(data.player1);
-        setPlayer2(data.player2);
-        // Set current user data based on which player they are
-        if (idUsuario === data.player1.id) {
-          setCurrentUserData(data.player1);
-        } else if (idUsuario === data.player2.id) {
-          setCurrentUserData(data.player2);
+        if (data.type === 'playerData') {
+          setPlayer1(data.player1);
+          setPlayer2(data.player2);
+          if (idUsuario === data.player1.id) {
+            setCurrentUserData(data.player1);
+          } else if (idUsuario === data.player2.id) {
+            setCurrentUserData(data.player2);
+          }
         }
-      }
 
-      if (data.type === 'start') {
-        setBoard(data.board);
-        setIsXNext(data.isXNext);
-        setGameStatus('playing');
-      }
+        if (data.type === 'start') {
+          setBoard(data.board);
+          setIsXNext(data.isXNext);
+          setGameStatus('playing');
+        }
 
-      if (data.type === 'move') {
-        setBoard(data.board);
-        setIsXNext(data.isXNext);
-      }
+        if (data.type === 'move') {
+          setBoard(data.board);
+          setIsXNext(data.isXNext);
+        }
 
-      if (data.type === 'chat') {
-        setMessages((prev) => [...prev, data.message]);
-      }
+        if (data.type === 'chat') {
+          // Validate message structure
+          if (
+            data.message &&
+            typeof data.message === 'object' &&
+            data.message.text &&
+            data.message.user &&
+            data.message.userId &&
+            data.message.picture &&
+            data.message.timestamp
+          ) {
+            setMessages((prev) => [...prev, data.message]);
+          } else {
+            console.warn('Invalid chat message format:', data.message);
+          }
+        }
 
-      if (data.type === 'gameOver') {
-        setWinner(data.winner);
-        setGameStatus('finished');
+        if (data.type === 'gameOver') {
+          setWinner(data.winner);
+          setGameStatus('finished');
+        }
+      } catch (error) {
+        console.error('WebSocket message parsing error:', error);
       }
     };
 
@@ -106,19 +122,30 @@ const TicTacToe = () => {
   // Handle sending chat messages
   const sendMessage = (e) => {
     e.preventDefault();
-    if (newMessage.trim() && ws && ws.readyState === WebSocket.OPEN && currentUserData) {
-      ws.send(JSON.stringify({ 
-        type: 'chat', 
-        idPartida, 
-        message: {
-          text: newMessage,
-          user: currentUserData.name,
-          userId: currentUserData.id,
-          picture: currentUserData.picture,
-          timestamp: new Date().toISOString()
-        }
-      }));
+    if (
+      newMessage.trim() &&
+      ws &&
+      ws.readyState === WebSocket.OPEN &&
+      currentUserData &&
+      currentUserData.id &&
+      currentUserData.name &&
+      currentUserData.picture
+    ) {
+      const message = {
+        text: newMessage,
+        user: currentUserData.name,
+        userId: currentUserData.id,
+        picture: currentUserData.picture,
+        timestamp: new Date().toISOString(),
+      };
+      ws.send(JSON.stringify({ type: 'chat', idPartida, message }));
       setNewMessage('');
+    } else {
+      console.warn('Cannot send message: missing user data or WebSocket not open', {
+        newMessage,
+        wsReady: ws?.readyState,
+        currentUserData,
+      });
     }
   };
 
@@ -192,7 +219,7 @@ const TicTacToe = () => {
           <div className="grid grid-cols-3 gap-2 mb-4 w-full max-w-[240px] sm:max-w-[288px] md:max-w-[480px] mx-auto">
             {board.map((_, index) => renderSquare(index))}
           </div>
-          
+
           {/* Game Status */}
           <div className="text-center text-white text-xl mb-4">
             {gameStatus === 'waiting' && 'Esperando a que un amigo se una...'}
@@ -200,27 +227,19 @@ const TicTacToe = () => {
               <div className="flex items-center justify-center gap-2">
                 <span>Turno de:</span>
                 <span className="font-bold">{currentTurn.player.name}</span>
-                {currentTurn.symbol === 'X' ? (
-                  <X className="w-6 h-6" />
-                ) : (
-                  <Circle className="w-6 h-6" />
-                )}
+                {currentTurn.symbol === 'X' ? <X className="w-6 h-6" /> : <Circle className="w-6 h-6" />}
               </div>
             )}
             {gameStatus === 'finished' && winner && (
               <div className="flex items-center justify-center gap-2">
                 <span>¡Ganador:</span>
                 <span className="font-bold">{getWinnerName()}!</span>
-                {winner === 'X' ? (
-                  <X className="w-6 h-6" />
-                ) : (
-                  <Circle className="w-6 h-6" />
-                )}
+                {winner === 'X' ? <X className="w-6 h-6" /> : <Circle className="w-6 h-6" />}
               </div>
             )}
             {gameStatus === 'finished' && !winner && '¡Empate!'}
           </div>
-          
+
           <button
             className="w-full bg-gray-500 text-white py-2 rounded hover:bg-gray-400 transition"
             onClick={() => navigate('/')}
@@ -235,25 +254,45 @@ const TicTacToe = () => {
           <div className="flex flex-col flex-1 min-h-0">
             <div className="flex-1 overflow-y-auto mb-4 space-y-3">
               {messages.map((msg, index) => {
+                // Validate message before rendering
+                if (
+                  !msg ||
+                  typeof msg !== 'object' ||
+                  !msg.text ||
+                  !msg.user ||
+                  !msg.userId ||
+                  !msg.picture ||
+                  !msg.timestamp
+                ) {
+                  console.warn('Skipping invalid message:', msg);
+                  return null;
+                }
+
                 const isMyMessage = msg.userId === idUsuario;
                 return (
                   <div
                     key={index}
                     className={`flex ${isMyMessage ? 'justify-end' : 'justify-start'}`}
                   >
-                    <div className={`flex items-start gap-2 max-w-[80%] ${isMyMessage ? 'flex-row-reverse' : 'flex-row'}`}>
-                      <img 
-                        src={msg.picture} 
-                        alt={msg.user} 
+                    <div
+                      className={`flex items-start gap-2 max-w-[80%] ${
+                        isMyMessage ? 'flex-row-reverse' : 'flex-row'
+                      }`}
+                    >
+                      <img
+                        src={msg.picture}
+                        alt={msg.user}
                         className="w-8 h-8 rounded-full flex-shrink-0"
                       />
-                      <div className={`flex flex-col ${isMyMessage ? 'items-end' : 'items-start'}`}>
+                      <div
+                        className={`flex flex-col ${isMyMessage ? 'items-end' : 'items-start'}`}
+                      >
                         <span className="text-blue-300 text-xs mb-1">{msg.user}</span>
-                        <div className={`rounded-lg px-3 py-2 ${
-                          isMyMessage 
-                            ? 'bg-blue-600 text-white' 
-                            : 'bg-blue-800 text-white'
-                        }`}>
+                        <div
+                          className={`rounded-lg px-3 py-2 ${
+                            isMyMessage ? 'bg-blue-600 text-white' : 'bg-blue-800 text-white'
+                          }`}
+                        >
                           <p className="text-sm">{msg.text}</p>
                         </div>
                       </div>
