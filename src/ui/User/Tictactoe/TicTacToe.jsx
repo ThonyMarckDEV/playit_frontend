@@ -17,7 +17,6 @@ const TicTacToe = () => {
   const [player1, setPlayer1] = useState({ id: null, name: 'Player 1', picture: 'https://placehold.co/50x50' });
   const [player2, setPlayer2] = useState({ id: null, name: 'Opponent', picture: 'https://placehold.co/50x50' });
   const [gameStatus, setGameStatus] = useState('waiting');
-  const [waitingForOpponent, setWaitingForOpponent] = useState(false);
 
   // User data from JWT
   const refresh_token = jwtUtils.getRefreshTokenFromCookie();
@@ -54,7 +53,6 @@ const TicTacToe = () => {
         setBoard(data.board);
         setIsXNext(data.isXNext);
         setGameStatus('playing');
-        setWaitingForOpponent(false);
       }
 
       if (data.type === 'move') {
@@ -69,20 +67,6 @@ const TicTacToe = () => {
       if (data.type === 'gameOver') {
         setWinner(data.winner);
         setGameStatus('finished');
-        setWaitingForOpponent(false);
-      }
-
-      if (data.type === 'waiting') {
-        setWaitingForOpponent(true);
-      }
-
-      if (data.type === 'newGame') {
-        setBoard(data.board);
-        setIsXNext(data.isXNext);
-        setWinner(null);
-        setGameStatus('playing');
-        setWaitingForOpponent(false);
-        navigate(`/usuario/game/tictactoe/${data.idPartida}`);
       }
     };
 
@@ -113,21 +97,6 @@ const TicTacToe = () => {
     if (newMessage.trim() && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'chat', idPartida, message: newMessage, user: player1.name }));
       setNewMessage('');
-    }
-  };
-
-  // Reset game
-  const resetGame = () => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'reset', idPartida, idUsuario }));
-      setWaitingForOpponent(true);
-    }
-  };
-
-  // Accept reset
-  const acceptReset = () => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'acceptReset', idPartida, idUsuario }));
     }
   };
 
@@ -168,25 +137,9 @@ const TicTacToe = () => {
             {gameStatus === 'playing' && !winner && `Turno de: ${isXNext ? player1.name : player2.name}`}
             {gameStatus === 'finished' && winner && `¡Ganador: ${winner === 'X' ? player1.name : player2.name}!`}
             {gameStatus === 'finished' && !winner && '¡Empate!'}
-            {waitingForOpponent && 'Esperando a que el oponente acepte reiniciar...'}
           </div>
           <button
-            className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-400 transition"
-            onClick={resetGame}
-            disabled={gameStatus === 'waiting' || waitingForOpponent}
-          >
-            Reiniciar Juego
-          </button>
-          {waitingForOpponent && gameStatus !== 'waiting' && (
-            <button
-              className="w-full bg-green-500 text-white py-2 rounded hover:bg-green-400 transition mt-2"
-              onClick={acceptReset}
-            >
-              Aceptar Reinicio
-            </button>
-          )}
-          <button
-            className="w-full bg-gray-500 text-white py-2 rounded hover:bg-gray-400 transition mt-2"
+            className="w-full bg-gray-500 text-white py-2 rounded hover:bg-gray-400 transition"
             onClick={() => navigate('/')}
           >
             Volver al Inicio
