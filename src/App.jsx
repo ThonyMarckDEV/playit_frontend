@@ -11,6 +11,9 @@ import Login from './ui/Auth/Login';
 // UIS USUARIO
 import UserHome from './ui/User/Home/UserHome';
 
+//GAMES
+import TicTacToe from './ui/User/Tictactoe/TicTacToe';
+
 // Protector de ruta
 import ProtectedRouteHome from './utilities/ProtectedRouteHome';
 import ProtectedRoute from './utilities/ProtectedRoute';
@@ -36,8 +39,14 @@ function App() {
               path="/usuario/home"
               element={<ProtectedRoute requiredRole="usuario" element={<UserHome />} />}
             />
-          </Routes>
 
+            <Route
+              path="/usuario/game/tictactoe"
+              element={<ProtectedRoute requiredRole="usuario" element={<TicTacToe />} />}
+            />
+
+
+          </Routes>
           {/* ToastContainer global */}
           <ToastContainer position="top-right" autoClose={3000} />
         </Router>

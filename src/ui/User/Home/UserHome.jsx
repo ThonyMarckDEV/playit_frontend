@@ -21,12 +21,12 @@ const UserHome = () => {
   const userCode = refresh_token ? jwtUtils.getUserCode(refresh_token) || 'No code' : 'No code';
 
   const games = [
-    { id: 1, name: 'Triki', icon: '⚡', players: '1-2', difficulty: 'Fácil', color: 'from-blue-500 to-cyan-600' },
-    { id: 2, name: 'Memoria', icon: '🧠', players: '1', difficulty: 'Medio', color: 'from-blue-600 to-blue-800' },
-    { id: 3, name: 'Conecta 4', icon: '🔴', players: '2', difficulty: 'Medio', color: 'from-blue-500 to-indigo-600' },
-    { id: 4, name: 'Puzzle', icon: '🧩', players: '1', difficulty: 'Difícil', color: 'from-blue-500 to-blue-700' },
-    { id: 5, name: 'Palabras', icon: '📝', players: '1-4', difficulty: 'Medio', color: 'from-blue-400 to-cyan-500' },
-    { id: 6, name: 'Matemáticas', icon: '🔢', players: '1', difficulty: 'Fácil', color: 'from-blue-500 to-teal-600' },
+    { id: 1, name: 'Triki', icon: '⚡', players: '1-2', difficulty: 'Fácil', color: 'from-blue-500 to-cyan-600', route: '/usuario/game/tictactoe' },
+    { id: 2, name: 'Memoria', icon: '🧠', players: '1', difficulty: 'Medio', color: 'from-blue-600 to-blue-800', route: '/memory' },
+    { id: 3, name: 'Conecta 4', icon: '🔴', players: '2', difficulty: 'Medio', color: 'from-blue-500 to-indigo-600', route: '/connect4' },
+    { id: 4, name: 'Puzzle', icon: '🧩', players: '1', difficulty: 'Difícil', color: 'from-blue-500 to-blue-700', route: '/puzzle' },
+    { id: 5, name: 'Palabras', icon: '📝', players: '1-4', difficulty: 'Medio', color: 'from-blue-400 to-cyan-500', route: '/words' },
+    { id: 6, name: 'Matemáticas', icon: '🔢', players: '1', difficulty: 'Fácil', color: 'from-blue-500 to-teal-600', route: '/math' },
   ];
 
   const stats = [
@@ -34,6 +34,12 @@ const UserHome = () => {
     { label: 'Victorias', value: '32', icon: Trophy },
     { label: 'Amigos Online', value: '8', icon: Users },
   ];
+
+  // Handle game selection and navigation
+  const handleGameClick = (game) => {
+    setActiveGame(game.id);
+    navigate(game.route);
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-900">
@@ -64,7 +70,7 @@ const UserHome = () => {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {games.map((game) => (
-              <GameCard key={game.id} game={game} onClick={() => setActiveGame(game.id)} />
+              <GameCard key={game.id} game={game} onClick={() => handleGameClick(game)} />
             ))}
           </div>
         </div>
