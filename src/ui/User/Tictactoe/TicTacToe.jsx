@@ -3,7 +3,6 @@ import { X, Circle } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import jwtUtils from '../../../utilities/jwtUtils';
 import HeaderGame from '../../Reutilizables/HeaderGame';
-import { v4 as uuidv4 } from 'uuid';
 
 const TicTacToe = () => {
   const navigate = useNavigate();
@@ -18,6 +17,7 @@ const TicTacToe = () => {
   const [player2, setPlayer2] = useState({ id: null, name: 'Opponent', picture: 'https://placehold.co/50x50' });
   const [gameStatus, setGameStatus] = useState('waiting');
   const [currentUserData, setCurrentUserData] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   // User data from JWT
   const refresh_token = jwtUtils.getRefreshTokenFromCookie();
@@ -27,6 +27,37 @@ const TicTacToe = () => {
   const isCurrentUserPlayer1 = idUsuario === player1.id;
   const currentUserSymbol = isCurrentUserPlayer1 ? 'X' : 'O';
 
+  // Function to create a new game
+  const createNewGame = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch('http://localhost:3001/api/create-game', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ idUsuario }),
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        // Navegar a la nueva partida con el ID generado por MySQL
+        navigate(`/usuario/game/tictactoe/${data.idPartida}`);
+        return data.idPartida;
+      } else {
+        console.error('Error creating game:', data.error);
+        navigate('/');
+        return null;
+      }
+    } catch (error) {
+      console.error('Error creating game:', error);
+      navigate('/');
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // WebSocket setup
   useEffect(() => {
     if (!idUsuario) {
@@ -34,79 +65,100 @@ const TicTacToe = () => {
       return;
     }
 
-    const newIdPartida = idPartida || uuidv4();
-    if (!idPartida) {
-      navigate(`/usuario/game/tictactoe/${newIdPartida}`);
-    }
+    const initializeGame = async () => {
+      let gameId = idPartida;
 
-    const websocket = new WebSocket('ws://localhost:3002');
-    setWs(websocket);
-
-    websocket.onopen = () => {
-      websocket.send(JSON.stringify({ type: 'join', idPartida: newIdPartida, idUsuario }));
-    };
-
-    websocket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('Received WebSocket message:', data); // Debug log
-
-        if (data.type === 'playerData') {
-          setPlayer1(data.player1);
-          setPlayer2(data.player2);
-          if (idUsuario === data.player1.id) {
-            setCurrentUserData(data.player1);
-          } else if (idUsuario === data.player2.id) {
-            setCurrentUserData(data.player2);
-          }
-        }
-
-        if (data.type === 'start') {
-          setBoard(data.board);
-          setIsXNext(data.isXNext);
-          setGameStatus('playing');
-        }
-
-        if (data.type === 'move') {
-          setBoard(data.board);
-          setIsXNext(data.isXNext);
-        }
-
-        if (data.type === 'chat') {
-          // Validate message structure
-          if (
-            data.message &&
-            typeof data.message === 'object' &&
-            data.message.text &&
-            data.message.user &&
-            data.message.userId &&
-            data.message.picture &&
-            data.message.timestamp
-          ) {
-            setMessages((prev) => [...prev, data.message]);
-          } else {
-            console.warn('Invalid chat message format:', data.message);
-          }
-        }
-
-        if (data.type === 'gameOver') {
-          setWinner(data.winner);
-          setGameStatus('finished');
-        }
-      } catch (error) {
-        console.error('WebSocket message parsing error:', error);
+      // Si no hay ID de partida en la URL, crear una nueva
+      if (!gameId) {
+        gameId = await createNewGame();
+        if (!gameId) return;
       }
+
+      // Convertir a número si es string
+      const numericGameId = parseInt(gameId);
+
+      const websocket = new WebSocket('ws://localhost:3002');
+      setWs(websocket);
+
+      websocket.onopen = () => {
+        websocket.send(JSON.stringify({ 
+          type: 'join', 
+          idPartida: numericGameId, 
+          idUsuario: parseInt(idUsuario) 
+        }));
+      };
+
+      websocket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('Received WebSocket message:', data);
+
+          if (data.type === 'error') {
+            console.error('WebSocket error:', data.message);
+            navigate('/');
+            return;
+          }
+
+          if (data.type === 'playerData') {
+            setPlayer1(data.player1);
+            setPlayer2(data.player2);
+            if (idUsuario === data.player1.id) {
+              setCurrentUserData(data.player1);
+            } else if (idUsuario === data.player2.id) {
+              setCurrentUserData(data.player2);
+            }
+          }
+
+          if (data.type === 'start') {
+            setBoard(data.board);
+            setIsXNext(data.isXNext);
+            setGameStatus('playing');
+          }
+
+          if (data.type === 'move') {
+            setBoard(data.board);
+            setIsXNext(data.isXNext);
+          }
+
+          if (data.type === 'chat') {
+            if (
+              data.message &&
+              typeof data.message === 'object' &&
+              data.message.text &&
+              data.message.user &&
+              data.message.userId &&
+              data.message.picture &&
+              data.message.timestamp
+            ) {
+              setMessages((prev) => [...prev, data.message]);
+            } else {
+              console.warn('Invalid chat message format:', data.message);
+            }
+          }
+
+          if (data.type === 'gameOver') {
+            setWinner(data.winner);
+            setGameStatus('finished');
+          }
+        } catch (error) {
+          console.error('WebSocket message parsing error:', error);
+        }
+      };
+
+      websocket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+
+      websocket.onclose = () => {
+        console.log('WebSocket connection closed');
+      };
     };
 
-    websocket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
+    initializeGame();
 
-    websocket.onclose = () => {
-      console.log('WebSocket connection closed');
+    return () => {
+      if (ws) ws.close();
     };
-
-    return () => websocket.close();
   }, [idPartida, idUsuario, navigate]);
 
   // Handle Tic-Tac-Toe moves
@@ -115,7 +167,12 @@ const TicTacToe = () => {
     if ((isXNext && idUsuario !== player1.id) || (!isXNext && idUsuario !== player2.id)) return;
 
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'move', idPartida, index, idUsuario }));
+      ws.send(JSON.stringify({ 
+        type: 'move', 
+        idPartida: parseInt(idPartida), 
+        index, 
+        idUsuario: parseInt(idUsuario) 
+      }));
     }
   };
 
@@ -138,7 +195,11 @@ const TicTacToe = () => {
         picture: currentUserData.picture,
         timestamp: new Date().toISOString(),
       };
-      ws.send(JSON.stringify({ type: 'chat', idPartida, message }));
+      ws.send(JSON.stringify({ 
+        type: 'chat', 
+        idPartida: parseInt(idPartida), 
+        message 
+      }));
       setNewMessage('');
     } else {
       console.warn('Cannot send message: missing user data or WebSocket not open', {
@@ -177,6 +238,14 @@ const TicTacToe = () => {
 
   const currentTurn = getCurrentTurnInfo();
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-900 flex items-center justify-center">
+        <div className="text-white text-xl">Creando nueva partida...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-900 flex flex-col items-center justify-center p-4">
       <HeaderGame />
@@ -203,6 +272,13 @@ const TicTacToe = () => {
                   <span className="text-white text-sm">O</span>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Game ID Display */}
+          <div className="text-center mb-4 bg-blue-700 rounded-lg p-3">
+            <div className="text-white text-sm">
+              ID de Partida: <span className="font-bold">{idPartida}</span>
             </div>
           </div>
 
@@ -240,12 +316,21 @@ const TicTacToe = () => {
             {gameStatus === 'finished' && !winner && '¡Empate!'}
           </div>
 
-          <button
-            className="w-full bg-gray-500 text-white py-2 rounded hover:bg-gray-400 transition"
-            onClick={() => navigate('/')}
-          >
-            Volver al Inicio
-          </button>
+          <div className="flex gap-2">
+            <button
+              className="flex-1 bg-green-600 text-white py-2 rounded hover:bg-green-500 transition"
+              onClick={createNewGame}
+              disabled={isLoading}
+            >
+              Nueva Partida
+            </button>
+            <button
+              className="flex-1 bg-gray-500 text-white py-2 rounded hover:bg-gray-400 transition"
+              onClick={() => navigate('/')}
+            >
+              Volver al Inicio
+            </button>
+          </div>
         </div>
 
         {/* Chat Section */}
@@ -254,7 +339,6 @@ const TicTacToe = () => {
           <div className="flex flex-col flex-1 min-h-0">
             <div className="flex-1 overflow-y-auto mb-4 space-y-3">
               {messages.map((msg, index) => {
-                // Validate message before rendering
                 if (
                   !msg ||
                   typeof msg !== 'object' ||
@@ -268,7 +352,7 @@ const TicTacToe = () => {
                   return null;
                 }
 
-                const isMyMessage = msg.userId === idUsuario;
+                const isMyMessage = msg.userId === parseInt(idUsuario);
                 return (
                   <div
                     key={index}
