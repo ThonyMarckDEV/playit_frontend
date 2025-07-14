@@ -41,7 +41,7 @@ function App() {
             />
 
             <Route
-              path="/usuario/game/tictactoe"
+              path="/usuario/game/tictactoe/:idPartida?"
               element={<ProtectedRoute requiredRole="usuario" element={<TicTacToe />} />}
             />
 

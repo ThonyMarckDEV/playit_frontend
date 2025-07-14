@@ -1,95 +1,140 @@
 import React, { useState, useEffect } from 'react';
 import { X, Circle } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import jwtUtils from '../../../utilities/jwtUtils';
 import HeaderGame from '../../Reutilizables/HeaderGame';
+import { v4 as uuidv4 } from 'uuid';
 
 const TicTacToe = () => {
   const navigate = useNavigate();
+  const { idPartida } = useParams();
   const [board, setBoard] = useState(Array(9).fill(null));
   const [isXNext, setIsXNext] = useState(true);
   const [winner, setWinner] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [ws, setWs] = useState(null);
+  const [player1, setPlayer1] = useState({ id: null, name: 'Player 1', picture: 'https://placehold.co/50x50' });
+  const [player2, setPlayer2] = useState({ id: null, name: 'Opponent', picture: 'https://placehold.co/50x50' });
+  const [gameStatus, setGameStatus] = useState('waiting');
+  const [waitingForOpponent, setWaitingForOpponent] = useState(false);
 
-  // Mock user data from JWT
+  // User data from JWT
   const refresh_token = jwtUtils.getRefreshTokenFromCookie();
-  const player1Name = refresh_token ? jwtUtils.getName(refresh_token) || 'Player 1' : 'Player 1';
-  const player1Picture = refresh_token ? jwtUtils.getProfilePicture(refresh_token) || 'https://via.placeholder.com/50' : 'https://via.placeholder.com/50';
-  const player2Name = 'Opponent'; // Mock opponent
-  const player2Picture = 'https://via.placeholder.com/50'; // Mock opponent picture
+  const idUsuario = refresh_token ? jwtUtils.getUserID(refresh_token) : null;
 
-  // WebSocket setup for real-time chat
+  // WebSocket setup
   useEffect(() => {
-    const websocket = new WebSocket('ws://localhost:8080'); // Replace with actual WebSocket URL
+    if (!idUsuario) {
+      navigate('/');
+      return;
+    }
+
+    const newIdPartida = idPartida || uuidv4();
+    if (!idPartida) {
+      navigate(`/usuario/game/tictactoe/${newIdPartida}`);
+    }
+
+    const websocket = new WebSocket('ws://localhost:3002');
     setWs(websocket);
 
+    websocket.onopen = () => {
+      websocket.send(JSON.stringify({ type: 'join', idPartida: newIdPartida, idUsuario }));
+    };
+
     websocket.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      setMessages((prev) => [...prev, message]);
+      const data = JSON.parse(event.data);
+
+      if (data.type === 'playerData') {
+        setPlayer1(data.player1);
+        setPlayer2(data.player2);
+      }
+
+      if (data.type === 'start') {
+        setBoard(data.board);
+        setIsXNext(data.isXNext);
+        setGameStatus('playing');
+        setWaitingForOpponent(false);
+      }
+
+      if (data.type === 'move') {
+        setBoard(data.board);
+        setIsXNext(data.isXNext);
+      }
+
+      if (data.type === 'chat') {
+        setMessages((prev) => [...prev, data.message]);
+      }
+
+      if (data.type === 'gameOver') {
+        setWinner(data.winner);
+        setGameStatus('finished');
+        setWaitingForOpponent(false);
+      }
+
+      if (data.type === 'waiting') {
+        setWaitingForOpponent(true);
+      }
+
+      if (data.type === 'newGame') {
+        setBoard(data.board);
+        setIsXNext(data.isXNext);
+        setWinner(null);
+        setGameStatus('playing');
+        setWaitingForOpponent(false);
+        navigate(`/usuario/game/tictactoe/${data.idPartida}`);
+      }
+    };
+
+    websocket.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    websocket.onclose = () => {
+      console.log('WebSocket connection closed');
     };
 
     return () => websocket.close();
-  }, []);
+  }, [idPartida, idUsuario, navigate]);
+
+  // Handle Tic-Tac-Toe moves
+  const handleClick = (index) => {
+    if (board[index] || winner || gameStatus !== 'playing') return;
+    if ((isXNext && idUsuario !== player1.id) || (!isXNext && idUsuario !== player2.id)) return;
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'move', idPartida, index, idUsuario }));
+    }
+  };
 
   // Handle sending chat messages
   const sendMessage = (e) => {
     e.preventDefault();
-    if (newMessage.trim() && ws) {
-      const message = {
-        user: player1Name,
-        text: newMessage,
-        timestamp: new Date().toISOString(),
-      };
-      ws.send(JSON.stringify(message));
-      setMessages((prev) => [...prev, message]);
+    if (newMessage.trim() && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'chat', idPartida, message: newMessage, user: player1.name }));
       setNewMessage('');
     }
   };
 
-  // Handle Tic-Tac-Toe moves
-  const handleClick = (index) => {
-    if (board[index] || winner) return;
-
-    const newBoard = [...board];
-    newBoard[index] = isXNext ? 'X' : 'O';
-    setBoard(newBoard);
-    setIsXNext(!isXNext);
-
-    const gameWinner = calculateWinner(newBoard);
-    if (gameWinner) {
-      setWinner(gameWinner);
-    } else if (!newBoard.includes(null)) {
-      setWinner('Draw');
-    }
-  };
-
-  // Calculate winner
-  const calculateWinner = (board) => {
-    const lines = [
-      [0, 1, 2], [3, 4, 5], [6, 7, 8], // Rows
-      [0, 3, 6], [1, 4, 7], [2, 5, 8], // Columns
-      [0, 4, 8], [2, 4, 6], // Diagonals
-    ];
-    for (let [a, b, c] of lines) {
-      if (board[a] && board[a] === board[b] && board[a] === board[c]) {
-        return board[a];
-      }
-    }
-    return null;
-  };
-
   // Reset game
   const resetGame = () => {
-    setBoard(Array(9).fill(null));
-    setIsXNext(true);
-    setWinner(null);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'reset', idPartida, idUsuario }));
+      setWaitingForOpponent(true);
+    }
+  };
+
+  // Accept reset
+  const acceptReset = () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'acceptReset', idPartida, idUsuario }));
+    }
   };
 
   // Render square
   const renderSquare = (index) => (
     <button
+      key={index}
       className="w-20 h-20 sm:w-24 sm:h-24 md:w-40 md:h-40 bg-blue-800 text-white text-4xl font-bold flex items-center justify-center border-2 border-blue-600 hover:bg-blue-700 transition"
       onClick={() => handleClick(index)}
     >
@@ -106,31 +151,40 @@ const TicTacToe = () => {
         <div className="flex-1 max-w-md mx-auto md:max-w-lg">
           <div className="flex justify-between items-center mb-4">
             <div className="flex items-center gap-2">
-              <img src={player1Picture} alt="Player 1" className="w-12 h-12 rounded-full" />
-              <span className="text-white font-bold">{player1Name}</span>
+              <img src={player1.picture} alt="Player 1" className="w-12 h-12 rounded-full" />
+              <span className="text-white font-bold">{player1.name}</span>
             </div>
             <span className="text-white text-lg">vs</span>
             <div className="flex items-center gap-2">
-              <img src={player2Picture} alt="Player 2" className="w-12 h-12 rounded-full" />
-              <span className="text-white font-bold">{player2Name}</span>
+              <img src={player2.picture} alt="Player 2" className="w-12 h-12 rounded-full" />
+              <span className="text-white font-bold">{player2.name}</span>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-2 mb-4 w-full max-w-[240px] sm:max-w-[288px] md:max-w-[480px] mx-auto">
             {board.map((_, index) => renderSquare(index))}
           </div>
           <div className="text-center text-white text-xl mb-4">
-            {winner
-              ? winner === 'Draw'
-                ? '¡Empate!'
-                : `¡Ganador: ${winner === 'X' ? player1Name : player2Name}!`
-              : `Turno de: ${isXNext ? player1Name : player2Name}`}
+            {gameStatus === 'waiting' && 'Esperando a que un amigo se una...'}
+            {gameStatus === 'playing' && !winner && `Turno de: ${isXNext ? player1.name : player2.name}`}
+            {gameStatus === 'finished' && winner && `¡Ganador: ${winner === 'X' ? player1.name : player2.name}!`}
+            {gameStatus === 'finished' && !winner && '¡Empate!'}
+            {waitingForOpponent && 'Esperando a que el oponente acepte reiniciar...'}
           </div>
           <button
             className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-400 transition"
             onClick={resetGame}
+            disabled={gameStatus === 'waiting' || waitingForOpponent}
           >
             Reiniciar Juego
           </button>
+          {waitingForOpponent && gameStatus !== 'waiting' && (
+            <button
+              className="w-full bg-green-500 text-white py-2 rounded hover:bg-green-400 transition mt-2"
+              onClick={acceptReset}
+            >
+              Aceptar Reinicio
+            </button>
+          )}
           <button
             className="w-full bg-gray-500 text-white py-2 rounded hover:bg-gray-400 transition mt-2"
             onClick={() => navigate('/')}
@@ -147,9 +201,7 @@ const TicTacToe = () => {
               {messages.map((msg, index) => (
                 <div
                   key={index}
-                  className={`mb-2 ${
-                    msg.user === player1Name ? 'text-right' : 'text-left'
-                  }`}
+                  className={`mb-2 ${msg.user === player1.name ? 'text-right' : 'text-left'}`}
                 >
                   <span className="text-blue-300 text-sm">{msg.user}</span>
                   <p className="text-white bg-blue-700 rounded p-2 inline-block">{msg.text}</p>
@@ -163,10 +215,12 @@ const TicTacToe = () => {
                 onChange={(e) => setNewMessage(e.target.value)}
                 className="flex-1 bg-blue-700 text-white rounded p-2 focus:outline-none"
                 placeholder="Escribe un mensaje..."
+                disabled={gameStatus !== 'playing'}
               />
               <button
                 type="submit"
                 className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-400 transition"
+                disabled={gameStatus !== 'playing'}
               >
                 Enviar
               </button>
