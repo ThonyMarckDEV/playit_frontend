@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Circle } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import jwtUtils from '../../../utilities/jwtUtils';
 import HeaderGame from '../../Reutilizables/HeaderGame';
+import FetchWithGif from '../../Reutilizables/FetchWithGif'; // Importar el componente
 
 const TicTacToe = () => {
   const navigate = useNavigate();
@@ -17,8 +18,18 @@ const TicTacToe = () => {
   const [player2, setPlayer2] = useState({ id: null, name: 'Opponent', picture: 'https://placehold.co/50x50' });
   const [gameStatus, setGameStatus] = useState('waiting');
   const [currentUserData, setCurrentUserData] = useState(null);
-  const [isCreatingGame, setIsCreatingGame] = useState(!idPartida);
+  const [isCreatingGame, setIsCreatingGame] = useState(false);
   const [error, setError] = useState(null);
+  const [actualGameId, setActualGameId] = useState(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [showLoadingForPlayer2, setShowLoadingForPlayer2] = useState(false); // Nuevo estado
+  
+  // Refs para evitar múltiples ejecuciones
+  const gameInitialized = useRef(false);
+  const wsRef = useRef(null);
+  const reconnectAttempts = useRef(0);
+  const maxReconnectAttempts = 3;
+  const reconnectTimeoutRef = useRef(null);
 
   const refresh_token = jwtUtils.getRefreshTokenFromCookie();
   const idUsuario = refresh_token ? jwtUtils.getUserID(refresh_token) : null;
@@ -31,6 +42,9 @@ const TicTacToe = () => {
     try {
       setIsCreatingGame(true);
       setError(null);
+
+      console.log('Creating new game for user:', idUsuario);
+      
       const response = await fetch('http://localhost:3001/api/create-game', {
         method: 'POST',
         headers: {
@@ -41,24 +55,174 @@ const TicTacToe = () => {
 
       const data = await response.json();
       if (response.ok) {
-        navigate(`/usuario/game/tictactoe/${data.idPartida}`);
+        console.log('Game created successfully with ID:', data.idPartida);
         return data.idPartida;
       } else {
+        console.error('Error creating game:', data.error);
         setError(data.error || 'Failed to create game');
-        navigate('/usuario/home');
         return null;
       }
     } catch (error) {
       console.error('Error creating game:', error);
       setError('Error connecting to server');
-      navigate('/usuario/home');
       return null;
     } finally {
       setIsCreatingGame(false);
     }
   };
 
+  // Function to handle WebSocket messages
+  const handleWebSocketMessage = useCallback((event) => {
+    try {
+      const data = JSON.parse(event.data);
+      console.log('Received WebSocket message:', data);
+
+      if (data.type === 'error') {
+        console.error('WebSocket error:', data.message);
+        setError(data.message);
+        if (data.message === 'Game not found') {
+          navigate('/usuario/home');
+        }
+        return;
+      }
+
+      if (data.type === 'playerData') {
+        setPlayer1(data.player1);
+        setPlayer2(data.player2);
+        if (idUsuario === data.player1.id) {
+          setCurrentUserData(data.player1);
+        } else if (idUsuario === data.player2.id) {
+          setCurrentUserData(data.player2);
+          // Si el usuario actual es el player2 y se acaba de unir, mostrar loading
+          setShowLoadingForPlayer2(true);
+        }
+      }
+
+      if (data.type === 'start') {
+        setBoard(data.board);
+        setIsXNext(data.isXNext);
+        setGameStatus('playing');
+        setError(null); // Clear any previous errors
+        setShowLoadingForPlayer2(false); // Ocultar loading cuando el juego inicia
+      }
+
+      if (data.type === 'move') {
+        setBoard(data.board);
+        setIsXNext(data.isXNext);
+      }
+
+      if (data.type === 'chat') {
+        if (
+          data.message &&
+          typeof data.message === 'object' &&
+          data.message.text &&
+          data.message.user &&
+          data.message.userId &&
+          data.message.picture &&
+          data.message.timestamp
+        ) {
+          setMessages((prev) => [...prev, data.message]);
+        }
+      }
+
+      if (data.type === 'gameOver') {
+        setWinner(data.winner);
+        setGameStatus('finished');
+        setShowLoadingForPlayer2(false); // Ocultar loading cuando el juego termina
+        if (data.reason === 'opponent_disconnected') {
+          alert('¡Ganaste! Tu oponente se ha desconectado.');
+        }
+      }
+    } catch (error) {
+      console.error('WebSocket message parsing error:', error);
+      setError('Error processing game data');
+    }
+  }, [idUsuario, navigate]);
+
+  // Function to connect to WebSocket with retry logic
+  const connectWebSocket = useCallback((gameId) => {
+    // Clear any existing reconnection timeout
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+
+    // If already connecting, don't start another connection
+    if (isConnecting) {
+      console.log('Already connecting to WebSocket');
+      return;
+    }
+
+    // If already connected, don't create another connection
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      console.log('WebSocket already connected');
+      return;
+    }
+
+    setIsConnecting(true);
+    console.log('Connecting to WebSocket for game:', gameId);
+
+    const numericGameId = parseInt(gameId);
+    const websocket = new WebSocket('ws://localhost:3002');
+    
+    // Store reference immediately
+    wsRef.current = websocket;
+    setWs(websocket);
+
+    websocket.onopen = () => {
+      console.log('WebSocket connected, joining game...');
+      setIsConnecting(false);
+      setError(null);
+      reconnectAttempts.current = 0; // Reset reconnection attempts
+      
+      websocket.send(JSON.stringify({ 
+        type: 'join', 
+        idPartida: numericGameId, 
+        idUsuario: parseInt(idUsuario) 
+      }));
+    };
+
+    websocket.onmessage = handleWebSocketMessage;
+
+    websocket.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setIsConnecting(false);
+      setError('Error connecting to game server');
+    };
+
+    websocket.onclose = (event) => {
+      console.log('WebSocket connection closed:', event.code, event.reason);
+      setIsConnecting(false);
+      
+      // Clean up references
+      if (wsRef.current === websocket) {
+        wsRef.current = null;
+        setWs(null);
+      }
+
+      // Only attempt reconnection if game is still active and we haven't exceeded max attempts
+      if (gameStatus !== 'finished' && reconnectAttempts.current < maxReconnectAttempts) {
+        reconnectAttempts.current++;
+        console.log(`Attempting to reconnect (${reconnectAttempts.current}/${maxReconnectAttempts})...`);
+        
+        reconnectTimeoutRef.current = setTimeout(() => {
+          connectWebSocket(gameId);
+        }, 2000 * reconnectAttempts.current); // Exponential backoff
+      } else if (reconnectAttempts.current >= maxReconnectAttempts) {
+        setError('Connection lost. Please refresh the page.');
+      }
+    };
+
+    return websocket;
+  }, [idUsuario, isConnecting, gameStatus, handleWebSocketMessage]);
+
+  // Initialize game effect
   useEffect(() => {
+    // Si ya se inicializó el juego, no hacer nada
+    if (gameInitialized.current) {
+      return;
+    }
+
     if (!idUsuario) {
       setError('Please log in to play');
       navigate('/usuario/home');
@@ -66,113 +230,68 @@ const TicTacToe = () => {
     }
 
     const initializeGame = async () => {
+      gameInitialized.current = true;
+      
       let gameId = idPartida;
 
+      // Si no hay ID de partida en la URL, crear una nueva
       if (!gameId) {
         gameId = await createGame();
-        if (!gameId) return;
+        if (!gameId) {
+          navigate('/usuario/home');
+          return;
+        }
+        // Actualizar la URL sin recargar la página
+        window.history.replaceState({}, '', `/usuario/game/tictactoe/${gameId}`);
+      } else {
+        // Si hay ID de partida en la URL, significa que es un jugador invitado
+        // Mostrar loading para el player2
+        setShowLoadingForPlayer2(true);
       }
 
-      const numericGameId = parseInt(gameId);
-      const websocket = new WebSocket('ws://localhost:3002');
-      setWs(websocket);
+      // Guardar el ID del juego actual
+      setActualGameId(gameId);
 
-      websocket.onopen = () => {
-        websocket.send(JSON.stringify({ 
-          type: 'join', 
-          idPartida: numericGameId, 
-          idUsuario: parseInt(idUsuario) 
-        }));
-      };
-
-      websocket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log('Received WebSocket message:', data);
-
-          if (data.type === 'error') {
-            console.error('WebSocket error:', data.message);
-            setError(data.message);
-            navigate('/usuario/home');
-            return;
-          }
-
-          if (data.type === 'playerData') {
-            setPlayer1(data.player1);
-            setPlayer2(data.player2);
-            if (idUsuario === data.player1.id) {
-              setCurrentUserData(data.player1);
-            } else if (idUsuario === data.player2.id) {
-              setCurrentUserData(data.player2);
-            }
-          }
-
-          if (data.type === 'start') {
-            setBoard(data.board);
-            setIsXNext(data.isXNext);
-            setGameStatus('playing');
-          }
-
-          if (data.type === 'move') {
-            setBoard(data.board);
-            setIsXNext(data.isXNext);
-          }
-
-          if (data.type === 'chat') {
-            if (
-              data.message &&
-              typeof data.message === 'object' &&
-              data.message.text &&
-              data.message.user &&
-              data.message.userId &&
-              data.message.picture &&
-              data.message.timestamp
-            ) {
-              setMessages((prev) => [...prev, data.message]);
-            }
-          }
-
-          if (data.type === 'gameOver') {
-            setWinner(data.winner);
-            setGameStatus('finished');
-            if (data.reason === 'opponent_disconnected') {
-              alert('¡Ganaste! Tu oponente se ha desconectado.');
-            }
-          }
-        } catch (error) {
-          console.error('WebSocket message parsing error:', error);
-          setError('Error processing game data');
-        }
-      };
-
-      websocket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setError('Error connecting to game server');
-      };
-
-      websocket.onclose = () => {
-        console.log('WebSocket connection closed');
-      };
-
-      return () => {
-        if (websocket) websocket.close();
-      };
+      // Conectar al WebSocket
+      connectWebSocket(gameId);
     };
 
     initializeGame();
-  }, [idPartida, idUsuario, navigate]);
+  }, [idPartida, idUsuario, navigate, createGame, connectWebSocket]);
+
+  // Cleanup effect
+  useEffect(() => {
+    return () => {
+      // Clear reconnection timeout
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      
+      // Close WebSocket connection
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, []);
 
   const handleClick = (index) => {
     if (board[index] || winner || gameStatus !== 'playing') return;
     if ((isXNext && idUsuario !== player1.id) || (!isXNext && idUsuario !== player2.id)) return;
 
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ 
+    const currentGameId = actualGameId || idPartida;
+    
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ 
         type: 'move', 
-        idPartida: parseInt(idPartida), 
+        idPartida: parseInt(currentGameId), 
         index, 
         idUsuario: parseInt(idUsuario) 
       }));
+    } else {
+      setError('Connection lost. Attempting to reconnect...');
+      connectWebSocket(currentGameId);
     }
   };
 
@@ -180,13 +299,15 @@ const TicTacToe = () => {
     e.preventDefault();
     if (
       newMessage.trim() &&
-      ws &&
-      ws.readyState === WebSocket.OPEN &&
+      wsRef.current &&
+      wsRef.current.readyState === WebSocket.OPEN &&
       currentUserData &&
       currentUserData.id &&
       currentUserData.name &&
       currentUserData.picture
     ) {
+      const currentGameId = actualGameId || idPartida;
+      
       const message = {
         text: newMessage,
         user: currentUserData.name,
@@ -194,20 +315,25 @@ const TicTacToe = () => {
         picture: currentUserData.picture,
         timestamp: new Date().toISOString(),
       };
-      ws.send(JSON.stringify({ 
+      wsRef.current.send(JSON.stringify({ 
         type: 'chat', 
-        idPartida: parseInt(idPartida), 
+        idPartida: parseInt(currentGameId), 
         message 
       }));
       setNewMessage('');
+    } else if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      setError('Connection lost. Please try again.');
+      const currentGameId = actualGameId || idPartida;
+      connectWebSocket(currentGameId);
     }
   };
 
   const renderSquare = (index) => (
     <button
       key={index}
-      className="w-20 h-20 sm:w-24 sm:h-24 md:w-40 md:h-40 bg-blue-800 text-white text-4xl font-bold flex items-center justify-center border-2 border-blue-600 hover:bg-blue-700 transition"
+      className="w-20 h-20 sm:w-24 sm:h-24 md:w-40 md:h-40 bg-blue-800 text-white text-4xl font-bold flex items-center justify-center border-2 border-blue-600 hover:bg-blue-700 transition disabled:opacity-50"
       onClick={() => handleClick(index)}
+      disabled={gameStatus !== 'playing' || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN}
     >
       {board[index] === 'X' && <X className="w-10 h-10 sm:w-12 sm:h-12 md:w-20 md:h-20" />}
       {board[index] === 'O' && <Circle className="w-10 h-10 sm:w-12 sm:h-12 md:w-20 md:h-20" />}
@@ -226,8 +352,17 @@ const TicTacToe = () => {
     return { player: currentPlayer, symbol: currentSymbol };
   };
 
-  const currentTurn = getCurrentTurnInfo();
+  const getConnectionStatus = () => {
+    if (isConnecting) return 'Conectando...';
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return 'Desconectado';
+    return 'Conectado';
+  };
 
+  const currentTurn = getCurrentTurnInfo();
+  const currentGameId = actualGameId || idPartida;
+  const connectionStatus = getConnectionStatus();
+
+  // Mostrar loading si está creando el juego
   if (isCreatingGame) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-900 flex items-center justify-center">
@@ -236,12 +371,9 @@ const TicTacToe = () => {
     );
   }
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-900 flex items-center justify-center">
-        <div className="text-white text-xl">Error: {error}</div>
-      </div>
-    );
+  // Mostrar FetchWithGif si el jugador 2 se está conectando
+  if (showLoadingForPlayer2 && idPartida) {
+    return <FetchWithGif />;
   }
 
   return (
@@ -250,6 +382,24 @@ const TicTacToe = () => {
       <div className="w-full max-w-5xl mx-auto mt-20 bg-blue-800 rounded-lg shadow-lg p-6 flex flex-col md:flex-row gap-6">
         {/* Game Board Section */}
         <div className="flex-1 max-w-md mx-auto md:max-w-lg">
+          {/* Connection Status */}
+          <div className="text-center mb-4">
+            <div className={`inline-block px-3 py-1 rounded-full text-sm font-bold ${
+              connectionStatus === 'Conectado' ? 'bg-green-500 text-white' : 
+              connectionStatus === 'Conectando...' ? 'bg-yellow-500 text-white' : 
+              'bg-red-500 text-white'
+            }`}>
+              {connectionStatus}
+            </div>
+          </div>
+
+          {/* Error Display */}
+          {error && (
+            <div className="mb-4 p-3 bg-red-500 text-white rounded-lg text-center">
+              {error}
+            </div>
+          )}
+
           {/* Players Info with Symbols */}
           <div className="flex justify-between items-center mb-4">
             <div className="flex items-center gap-3 bg-blue-700 rounded-lg p-3">
@@ -270,13 +420,6 @@ const TicTacToe = () => {
                   <span className="text-white text-sm">O</span>
                 </div>
               </div>
-            </div>
-          </div>
-
-          {/* Game ID Display */}
-          <div className="text-center mb-4 bg-blue-700 rounded-lg p-3">
-            <div className="text-white text-sm">
-              ID de Partida: <span className="font-bold">{idPartida}</span>
             </div>
           </div>
 
@@ -321,6 +464,15 @@ const TicTacToe = () => {
             >
               Volver al Inicio
             </button>
+            {connectionStatus === 'Desconectado' && (
+              <button
+                className="flex-1 bg-green-500 text-white py-2 rounded hover:bg-green-400 transition"
+                onClick={() => connectWebSocket(currentGameId)}
+                disabled={isConnecting}
+              >
+                {isConnecting ? 'Conectando...' : 'Reconectar'}
+              </button>
+            )}
           </div>
         </div>
 
@@ -383,12 +535,12 @@ const TicTacToe = () => {
                 onChange={(e) => setNewMessage(e.target.value)}
                 className="flex-1 bg-blue-700 text-white rounded p-2 focus:outline-none placeholder-blue-300"
                 placeholder="Escribe un mensaje..."
-                disabled={gameStatus !== 'playing'}
+                disabled={gameStatus !== 'playing' || connectionStatus !== 'Conectado'}
               />
               <button
                 type="submit"
                 className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-400 transition disabled:opacity-50"
-                disabled={gameStatus !== 'playing' || !newMessage.trim()}
+                disabled={gameStatus !== 'playing' || !newMessage.trim() || connectionStatus !== 'Conectado'}
               >
                 Enviar
               </button>
