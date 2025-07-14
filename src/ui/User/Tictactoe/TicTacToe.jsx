@@ -17,20 +17,20 @@ const TicTacToe = () => {
   const [player2, setPlayer2] = useState({ id: null, name: 'Opponent', picture: 'https://placehold.co/50x50' });
   const [gameStatus, setGameStatus] = useState('waiting');
   const [currentUserData, setCurrentUserData] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isCreatingGame, setIsCreatingGame] = useState(!idPartida);
+  const [error, setError] = useState(null);
 
-  // User data from JWT
   const refresh_token = jwtUtils.getRefreshTokenFromCookie();
   const idUsuario = refresh_token ? jwtUtils.getUserID(refresh_token) : null;
 
-  // Determine if current user is player 1 (X) or player 2 (O)
   const isCurrentUserPlayer1 = idUsuario === player1.id;
   const currentUserSymbol = isCurrentUserPlayer1 ? 'X' : 'O';
 
   // Function to create a new game
-  const createNewGame = async () => {
-    setIsLoading(true);
+  const createGame = async () => {
     try {
+      setIsCreatingGame(true);
+      setError(null);
       const response = await fetch('http://localhost:3001/api/create-game', {
         method: 'POST',
         headers: {
@@ -41,42 +41,39 @@ const TicTacToe = () => {
 
       const data = await response.json();
       if (response.ok) {
-        // Navegar a la nueva partida con el ID generado por MySQL
         navigate(`/usuario/game/tictactoe/${data.idPartida}`);
         return data.idPartida;
       } else {
-        console.error('Error creating game:', data.error);
-        navigate('/');
+        setError(data.error || 'Failed to create game');
+        navigate('/usuario/home');
         return null;
       }
     } catch (error) {
       console.error('Error creating game:', error);
-      navigate('/');
+      setError('Error connecting to server');
+      navigate('/usuario/home');
       return null;
     } finally {
-      setIsLoading(false);
+      setIsCreatingGame(false);
     }
   };
 
-  // WebSocket setup
   useEffect(() => {
     if (!idUsuario) {
-      navigate('/');
+      setError('Please log in to play');
+      navigate('/usuario/home');
       return;
     }
 
     const initializeGame = async () => {
       let gameId = idPartida;
 
-      // Si no hay ID de partida en la URL, crear una nueva
       if (!gameId) {
-        gameId = await createNewGame();
+        gameId = await createGame();
         if (!gameId) return;
       }
 
-      // Convertir a número si es string
       const numericGameId = parseInt(gameId);
-
       const websocket = new WebSocket('ws://localhost:3002');
       setWs(websocket);
 
@@ -95,7 +92,8 @@ const TicTacToe = () => {
 
           if (data.type === 'error') {
             console.error('WebSocket error:', data.message);
-            navigate('/');
+            setError(data.message);
+            navigate('/usuario/home');
             return;
           }
 
@@ -131,37 +129,39 @@ const TicTacToe = () => {
               data.message.timestamp
             ) {
               setMessages((prev) => [...prev, data.message]);
-            } else {
-              console.warn('Invalid chat message format:', data.message);
             }
           }
 
           if (data.type === 'gameOver') {
             setWinner(data.winner);
             setGameStatus('finished');
+            if (data.reason === 'opponent_disconnected') {
+              alert('¡Ganaste! Tu oponente se ha desconectado.');
+            }
           }
         } catch (error) {
           console.error('WebSocket message parsing error:', error);
+          setError('Error processing game data');
         }
       };
 
       websocket.onerror = (error) => {
         console.error('WebSocket error:', error);
+        setError('Error connecting to game server');
       };
 
       websocket.onclose = () => {
         console.log('WebSocket connection closed');
       };
+
+      return () => {
+        if (websocket) websocket.close();
+      };
     };
 
     initializeGame();
-
-    return () => {
-      if (ws) ws.close();
-    };
   }, [idPartida, idUsuario, navigate]);
 
-  // Handle Tic-Tac-Toe moves
   const handleClick = (index) => {
     if (board[index] || winner || gameStatus !== 'playing') return;
     if ((isXNext && idUsuario !== player1.id) || (!isXNext && idUsuario !== player2.id)) return;
@@ -176,7 +176,6 @@ const TicTacToe = () => {
     }
   };
 
-  // Handle sending chat messages
   const sendMessage = (e) => {
     e.preventDefault();
     if (
@@ -201,16 +200,9 @@ const TicTacToe = () => {
         message 
       }));
       setNewMessage('');
-    } else {
-      console.warn('Cannot send message: missing user data or WebSocket not open', {
-        newMessage,
-        wsReady: ws?.readyState,
-        currentUserData,
-      });
     }
   };
 
-  // Render square
   const renderSquare = (index) => (
     <button
       key={index}
@@ -222,13 +214,11 @@ const TicTacToe = () => {
     </button>
   );
 
-  // Get winner name
   const getWinnerName = () => {
     if (!winner) return null;
     return winner === 'X' ? player1.name : player2.name;
   };
 
-  // Get current turn info
   const getCurrentTurnInfo = () => {
     if (gameStatus !== 'playing') return null;
     const currentPlayer = isXNext ? player1 : player2;
@@ -238,10 +228,18 @@ const TicTacToe = () => {
 
   const currentTurn = getCurrentTurnInfo();
 
-  if (isLoading) {
+  if (isCreatingGame) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-900 flex items-center justify-center">
-        <div className="text-white text-xl">Creando nueva partida...</div>
+        <div className="text-white text-xl">Creando partida...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-900 flex items-center justify-center">
+        <div className="text-white text-xl">Error: {error}</div>
       </div>
     );
   }
@@ -318,15 +316,8 @@ const TicTacToe = () => {
 
           <div className="flex gap-2">
             <button
-              className="flex-1 bg-green-600 text-white py-2 rounded hover:bg-green-500 transition"
-              onClick={createNewGame}
-              disabled={isLoading}
-            >
-              Nueva Partida
-            </button>
-            <button
               className="flex-1 bg-gray-500 text-white py-2 rounded hover:bg-gray-400 transition"
-              onClick={() => navigate('/')}
+              onClick={() => navigate('/usuario/home')}
             >
               Volver al Inicio
             </button>
