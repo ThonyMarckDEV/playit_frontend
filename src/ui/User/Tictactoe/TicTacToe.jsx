@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import jwtUtils from '../../../utilities/jwtUtils';
 import HeaderGame from '../../Reutilizables/HeaderGame';
 import FetchWithGif from '../../Reutilizables/FetchWithGif'; // Importar el componente
+import {API_BASE_URL_GAME_TRIKI,WEBSOCKET_TRIKI_URL} from '../../../js/trikiHelper';
 
 const TicTacToe = () => {
   const navigate = useNavigate();
@@ -44,8 +45,8 @@ const TicTacToe = () => {
       setError(null);
 
       console.log('Creating new game for user:', idUsuario);
-      
-      const response = await fetch('http://localhost:3001/api/create-game', {
+
+      const response = await fetch(`${API_BASE_URL_GAME_TRIKI}/api/create-game`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -163,7 +164,7 @@ const TicTacToe = () => {
     console.log('Connecting to WebSocket for game:', gameId);
 
     const numericGameId = parseInt(gameId);
-    const websocket = new WebSocket('ws://localhost:3002');
+    const websocket = new WebSocket(WEBSOCKET_TRIKI_URL);
     
     // Store reference immediately
     wsRef.current = websocket;
