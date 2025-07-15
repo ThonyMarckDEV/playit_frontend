@@ -29,6 +29,10 @@ const TicTacToe = () => {
   const [isChatExpanded, setIsChatExpanded] = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
 
+  // Sound effects
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const audioContextRef = useRef(null);
+
   const gameInitialized = useRef(false);
   const wsRef = useRef(null);
   const reconnectAttempts = useRef(0);
@@ -39,8 +43,152 @@ const TicTacToe = () => {
   const refresh_token = jwtUtils.getRefreshTokenFromCookie();
   const idUsuario = refresh_token ? jwtUtils.getUserID(refresh_token) : null;
 
+  // Determine if current user is the game creator (player1)
   const isCurrentUserPlayer1 = idUsuario === player1.id;
   const currentUserSymbol = isCurrentUserPlayer1 ? 'X' : 'O';
+
+  // Get display order for players based on current user perspective
+  const getDisplayPlayers = () => {
+    if (isCurrentUserPlayer1) {
+      // Current user is player1, show player1 first
+      return {
+        firstPlayer: player1,
+        secondPlayer: player2,
+        firstSymbol: 'X',
+        secondSymbol: 'O'
+      };
+    } else {
+      // Current user is player2, show player2 first
+      return {
+        firstPlayer: player2,
+        secondPlayer: player1,
+        firstSymbol: 'O',
+        secondSymbol: 'X'
+      };
+    }
+  };
+
+  // Sound effect functions
+  const initAudioContext = () => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    return audioContextRef.current;
+  };
+
+  const playMoveSound = () => {
+    if (!soundEnabled) return;
+    
+    try {
+      const audioContext = initAudioContext();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.1);
+      
+      gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.1);
+    } catch (error) {
+      console.log('Sound not available');
+    }
+  };
+
+  const playWinSound = () => {
+    if (!soundEnabled) return;
+    
+    try {
+      const audioContext = initAudioContext();
+      if (audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+      
+      const frequencies = [523, 659, 784, 1047]; // C, E, G, C (acorde mayor)
+      
+      frequencies.forEach((freq, index) => {
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.frequency.setValueAtTime(freq, audioContext.currentTime + index * 0.2);
+        gainNode.gain.setValueAtTime(0.15, audioContext.currentTime + index * 0.2);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + index * 0.2 + 0.4);
+        
+        oscillator.start(audioContext.currentTime + index * 0.2);
+        oscillator.stop(audioContext.currentTime + index * 0.2 + 0.4);
+      });
+      
+      console.log('Win sound played successfully');
+    } catch (error) {
+      console.error('Error playing win sound:', error);
+    }
+  };
+
+  const playLoseSound = () => {
+    if (!soundEnabled) return;
+    
+    try {
+      const audioContext = initAudioContext();
+      if (audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+      
+      // Sonido descendente más dramático
+      const frequencies = [400, 350, 300, 200, 150]; // Frecuencias descendentes
+      
+      frequencies.forEach((freq, index) => {
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.frequency.setValueAtTime(freq, audioContext.currentTime + index * 0.15);
+        gainNode.gain.setValueAtTime(0.12, audioContext.currentTime + index * 0.15);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + index * 0.15 + 0.3);
+        
+        oscillator.start(audioContext.currentTime + index * 0.15);
+        oscillator.stop(audioContext.currentTime + index * 0.15 + 0.3);
+      });
+      
+      console.log('Lose sound played successfully');
+    } catch (error) {
+      console.error('Error playing lose sound:', error);
+    }
+  };
+
+
+  const playNotificationSound = () => {
+    if (!soundEnabled) return;
+    
+    try {
+      const audioContext = initAudioContext();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.setValueAtTime(600, audioContext.currentTime);
+      oscillator.frequency.setValueAtTime(800, audioContext.currentTime + 0.1);
+      
+      gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.2);
+    } catch (error) {
+      console.log('Sound not available');
+    }
+  };
 
   // Create a new game
   const createGame = async () => {
@@ -98,11 +246,13 @@ const TicTacToe = () => {
         setGameStatus('playing');
         setError(null);
         setShowLoadingForPlayer2(false);
+        playNotificationSound();
       }
 
       if (data.type === 'move') {
         setBoard(data.board);
         setIsXNext(data.isXNext);
+        playMoveSound();
       }
 
       if (data.type === 'chat') {
@@ -112,6 +262,7 @@ const TicTacToe = () => {
           if (!isChatExpanded && window.innerWidth < 768) {
             setUnreadMessages(prev => prev + 1);
           }
+          playNotificationSound();
         }
       }
 
@@ -119,8 +270,26 @@ const TicTacToe = () => {
         setWinner(data.winner);
         setGameStatus('finished');
         setShowLoadingForPlayer2(false);
+        
+        // Play appropriate sound based on winner
+        if (data.winner) {
+          const winnerIsCurrentUser = 
+            (data.winner === 'X' && isCurrentUserPlayer1) || 
+            (data.winner === 'O' && !isCurrentUserPlayer1);
+          
+          if (winnerIsCurrentUser) {
+            playWinSound();
+          } else {
+            playLoseSound();
+          }
+        } else {
+          // Draw
+          playNotificationSound();
+        }
+        
         if (data.reason === 'opponent_left') {
           alert('¡Ganaste! Tu oponente ha abandonado la partida.');
+          playWinSound();
         }
       }
 
@@ -129,11 +298,12 @@ const TicTacToe = () => {
         setIsXNext(data.isXNext);
         setGameStatus(data.status);
         setShowLoadingForPlayer2(false);
+        playNotificationSound();
       }
     } catch (error) {
       setError('Error processing game data');
     }
-  }, [idUsuario, navigate, isChatExpanded]);
+  }, [idUsuario, navigate, isChatExpanded, isCurrentUserPlayer1, soundEnabled]);
 
   // Connect to WebSocket with retry logic
   const connectWebSocket = useCallback((gameId) => {
@@ -302,6 +472,13 @@ const TicTacToe = () => {
     }
   };
 
+  const toggleSound = () => {
+    setSoundEnabled(!soundEnabled);
+    if (!soundEnabled) {
+      playNotificationSound();
+    }
+  };
+
   const renderSquare = (index) => (
     <button
       key={index}
@@ -335,6 +512,7 @@ const TicTacToe = () => {
   const currentTurn = getCurrentTurnInfo();
   const currentGameId = actualGameId || idPartida;
   const connectionStatus = getConnectionStatus();
+  const displayPlayers = getDisplayPlayers();
 
   if (isCreatingGame) {
     return (
@@ -356,8 +534,8 @@ const TicTacToe = () => {
         {/* Game Section */}
         <div className="flex-1 flex flex-col items-center justify-center">
           <div className="w-full max-w-2xl bg-blue-800 rounded-lg shadow-lg p-4 sm:p-6">
-            {/* Connection Status */}
-            <div className="text-center mb-4">
+            {/* Connection Status and Sound Toggle */}
+            <div className="flex justify-center items-center gap-4 mb-4">
               <div className={`inline-block px-3 py-1 rounded-full text-sm font-bold ${
                 connectionStatus === 'Conectado' ? 'bg-green-500 text-white' : 
                 connectionStatus === 'Conectando...' ? 'bg-yellow-500 text-white' : 
@@ -365,6 +543,14 @@ const TicTacToe = () => {
               }`}>
                 {connectionStatus}
               </div>
+              <button
+                onClick={toggleSound}
+                className={`px-3 py-1 rounded-full text-sm font-bold transition ${
+                  soundEnabled ? 'bg-green-500 text-white' : 'bg-gray-500 text-white'
+                }`}
+              >
+                {soundEnabled ? '🔊 Sonido' : '🔇 Silencio'}
+              </button>
             </div>
 
             {/* Error Message */}
@@ -374,23 +560,23 @@ const TicTacToe = () => {
               </div>
             )}
 
-            {/* Players Info */}
+            {/* Players Info - Fixed order based on current user perspective */}
             <div className="flex justify-between items-center mb-4 gap-2">
               <div className="flex items-center gap-2 sm:gap-3 bg-blue-700 rounded-lg p-2 sm:p-3 flex-1">
-                <img src={player1.picture} alt="Player 1" className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 rounded-full" />
+                <img src={displayPlayers.firstPlayer.picture} alt="First Player" className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 rounded-full" />
                 <div className="flex flex-col min-w-0">
-                  <span className="text-white font-bold text-sm sm:text-base truncate">{player1.name}</span>
-                  <span className="text-white text-xs sm:text-sm">X</span>
+                  <span className="text-white font-bold text-sm sm:text-base truncate">{displayPlayers.firstPlayer.name}</span>
+                  <span className="text-white text-xs sm:text-sm">{displayPlayers.firstSymbol}</span>
                 </div>
               </div>
               
               <span className="text-white text-sm sm:text-lg font-bold px-2">VS</span>
               
               <div className="flex items-center gap-2 sm:gap-3 bg-blue-700 rounded-lg p-2 sm:p-3 flex-1">
-                <img src={player2.picture} alt="Player 2" className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 rounded-full" />
+                <img src={displayPlayers.secondPlayer.picture} alt="Second Player" className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 rounded-full" />
                 <div className="flex flex-col min-w-0">
-                  <span className="text-white font-bold text-sm sm:text-base truncate">{player2.name}</span>
-                  <span className="text-white text-xs sm:text-sm">O</span>
+                  <span className="text-white font-bold text-sm sm:text-base truncate">{displayPlayers.secondPlayer.name}</span>
+                  <span className="text-white text-xs sm:text-sm">{displayPlayers.secondSymbol}</span>
                 </div>
               </div>
             </div>
