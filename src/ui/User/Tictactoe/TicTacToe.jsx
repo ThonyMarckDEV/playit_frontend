@@ -3,8 +3,8 @@ import { X, Circle } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import jwtUtils from '../../../utilities/jwtUtils';
 import HeaderGame from '../../Reutilizables/HeaderGame';
-import FetchWithGif from '../../Reutilizables/FetchWithGif'; // Importar el componente
-import {API_BASE_URL_GAME_TRIKI,WEBSOCKET_TRIKI_URL} from '../../../js/trikiHelper';
+import FetchWithGif from '../../Reutilizables/FetchWithGif';
+import { API_BASE_URL_GAME_TRIKI, WEBSOCKET_TRIKI_URL } from '../../../js/trikiHelper';
 
 const TicTacToe = () => {
   const navigate = useNavigate();
@@ -23,14 +23,14 @@ const TicTacToe = () => {
   const [error, setError] = useState(null);
   const [actualGameId, setActualGameId] = useState(null);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [showLoadingForPlayer2, setShowLoadingForPlayer2] = useState(false); // Nuevo estado
-  
-  // Refs para evitar múltiples ejecuciones
+  const [showLoadingForPlayer2, setShowLoadingForPlayer2] = useState(false);
+
   const gameInitialized = useRef(false);
   const wsRef = useRef(null);
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 3;
   const reconnectTimeoutRef = useRef(null);
+  const heartbeatIntervalRef = useRef(null); // For WebSocket keep-alive
 
   const refresh_token = jwtUtils.getRefreshTokenFromCookie();
   const idUsuario = refresh_token ? jwtUtils.getUserID(refresh_token) : null;
@@ -38,33 +38,24 @@ const TicTacToe = () => {
   const isCurrentUserPlayer1 = idUsuario === player1.id;
   const currentUserSymbol = isCurrentUserPlayer1 ? 'X' : 'O';
 
-  // Function to create a new game
+  // Create a new game
   const createGame = async () => {
     try {
       setIsCreatingGame(true);
       setError(null);
-
-      console.log('Creating new game for user:', idUsuario);
-
       const response = await fetch(`${API_BASE_URL_GAME_TRIKI}/api/create-game`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idUsuario }),
       });
-
       const data = await response.json();
       if (response.ok) {
-        console.log('Game created successfully with ID:', data.idPartida);
         return data.idPartida;
       } else {
-        console.error('Error creating game:', data.error);
         setError(data.error || 'Failed to create game');
         return null;
       }
     } catch (error) {
-      console.error('Error creating game:', error);
       setError('Error connecting to server');
       return null;
     } finally {
@@ -72,14 +63,13 @@ const TicTacToe = () => {
     }
   };
 
-  // Function to handle WebSocket messages
+  // Handle WebSocket messages
   const handleWebSocketMessage = useCallback((event) => {
     try {
       const data = JSON.parse(event.data);
       console.log('Received WebSocket message:', data);
 
       if (data.type === 'error') {
-        console.error('WebSocket error:', data.message);
         setError(data.message);
         if (data.message === 'Game not found') {
           navigate('/usuario/home');
@@ -94,8 +84,7 @@ const TicTacToe = () => {
           setCurrentUserData(data.player1);
         } else if (idUsuario === data.player2.id) {
           setCurrentUserData(data.player2);
-          // Si el usuario actual es el player2 y se acaba de unir, mostrar loading
-          setShowLoadingForPlayer2(true);
+          setShowLoadingForPlayer2(false); // Clear loading when player2 data is received
         }
       }
 
@@ -103,8 +92,8 @@ const TicTacToe = () => {
         setBoard(data.board);
         setIsXNext(data.isXNext);
         setGameStatus('playing');
-        setError(null); // Clear any previous errors
-        setShowLoadingForPlayer2(false); // Ocultar loading cuando el juego inicia
+        setError(null);
+        setShowLoadingForPlayer2(false); // Clear loading when game starts
       }
 
       if (data.type === 'move') {
@@ -113,15 +102,7 @@ const TicTacToe = () => {
       }
 
       if (data.type === 'chat') {
-        if (
-          data.message &&
-          typeof data.message === 'object' &&
-          data.message.text &&
-          data.message.user &&
-          data.message.userId &&
-          data.message.picture &&
-          data.message.timestamp
-        ) {
+        if (data.message && data.message.text && data.message.user && data.message.userId && data.message.picture && data.message.timestamp) {
           setMessages((prev) => [...prev, data.message]);
         }
       }
@@ -129,101 +110,85 @@ const TicTacToe = () => {
       if (data.type === 'gameOver') {
         setWinner(data.winner);
         setGameStatus('finished');
-        setShowLoadingForPlayer2(false); // Ocultar loading cuando el juego termina
-        if (data.reason === 'opponent_disconnected') {
-          alert('¡Ganaste! Tu oponente se ha desconectado.');
+        setShowLoadingForPlayer2(false);
+        if (data.reason === 'opponent_left') {
+          alert('¡Ganaste! Tu oponente ha abandonado la partida.');
         }
       }
+
+      if (data.type === 'reconnect') {
+        setBoard(data.board);
+        setIsXNext(data.isXNext);
+        setGameStatus(data.status);
+        setShowLoadingForPlayer2(false);
+      }
     } catch (error) {
-      console.error('WebSocket message parsing error:', error);
       setError('Error processing game data');
     }
   }, [idUsuario, navigate]);
 
-  // Function to connect to WebSocket with retry logic
+  // Connect to WebSocket with retry logic
   const connectWebSocket = useCallback((gameId) => {
-    // Clear any existing reconnection timeout
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
 
-    // If already connecting, don't start another connection
-    if (isConnecting) {
-      console.log('Already connecting to WebSocket');
-      return;
-    }
-
-    // If already connected, don't create another connection
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      console.log('WebSocket already connected');
+    if (isConnecting || (wsRef.current && wsRef.current.readyState === WebSocket.OPEN)) {
       return;
     }
 
     setIsConnecting(true);
-    console.log('Connecting to WebSocket for game:', gameId);
-
-    const numericGameId = parseInt(gameId);
     const websocket = new WebSocket(WEBSOCKET_TRIKI_URL);
-    
-    // Store reference immediately
     wsRef.current = websocket;
     setWs(websocket);
 
     websocket.onopen = () => {
-      console.log('WebSocket connected, joining game...');
       setIsConnecting(false);
       setError(null);
-      reconnectAttempts.current = 0; // Reset reconnection attempts
-      
+      reconnectAttempts.current = 0;
       websocket.send(JSON.stringify({ 
         type: 'join', 
-        idPartida: numericGameId, 
+        idPartida: parseInt(gameId), 
         idUsuario: parseInt(idUsuario) 
       }));
+
+      // Start heartbeat to keep connection alive
+      heartbeatIntervalRef.current = setInterval(() => {
+        if (websocket.readyState === WebSocket.OPEN) {
+          websocket.send(JSON.stringify({ type: 'heartbeat' }));
+        }
+      }, 30000); // Send heartbeat every 30 seconds
     };
 
     websocket.onmessage = handleWebSocketMessage;
 
-    websocket.onerror = (error) => {
-      console.error('WebSocket error:', error);
+    websocket.onerror = () => {
       setIsConnecting(false);
       setError('Error connecting to game server');
     };
 
-    websocket.onclose = (event) => {
-      console.log('WebSocket connection closed:', event.code, event.reason);
+    websocket.onclose = () => {
       setIsConnecting(false);
-      
-      // Clean up references
       if (wsRef.current === websocket) {
         wsRef.current = null;
         setWs(null);
       }
 
-      // Only attempt reconnection if game is still active and we haven't exceeded max attempts
       if (gameStatus !== 'finished' && reconnectAttempts.current < maxReconnectAttempts) {
         reconnectAttempts.current++;
-        console.log(`Attempting to reconnect (${reconnectAttempts.current}/${maxReconnectAttempts})...`);
-        
         reconnectTimeoutRef.current = setTimeout(() => {
           connectWebSocket(gameId);
-        }, 2000 * reconnectAttempts.current); // Exponential backoff
+        }, 2000 * reconnectAttempts.current);
       } else if (reconnectAttempts.current >= maxReconnectAttempts) {
-        setError('Connection lost. Please refresh the page.');
+        setError('Connection lost. Please try again.');
       }
     };
-
-    return websocket;
   }, [idUsuario, isConnecting, gameStatus, handleWebSocketMessage]);
 
-  // Initialize game effect
+  // Initialize game
   useEffect(() => {
-    // Si ya se inicializó el juego, no hacer nada
-    if (gameInitialized.current) {
-      return;
-    }
-
+    if (gameInitialized.current) return;
     if (!idUsuario) {
       setError('Please log in to play');
       navigate('/usuario/home');
@@ -232,57 +197,56 @@ const TicTacToe = () => {
 
     const initializeGame = async () => {
       gameInitialized.current = true;
-      
       let gameId = idPartida;
 
-      // Si no hay ID de partida en la URL, crear una nueva
       if (!gameId) {
         gameId = await createGame();
         if (!gameId) {
           navigate('/usuario/home');
           return;
         }
-        // Actualizar la URL sin recargar la página
         window.history.replaceState({}, '', `/usuario/game/tictactoe/${gameId}`);
       } else {
-        // Si hay ID de partida en la URL, significa que es un jugador invitado
-        // Mostrar loading para el player2
-        setShowLoadingForPlayer2(true);
+        setShowLoadingForPlayer2(true); // Show loading for player2 joining
       }
 
-      // Guardar el ID del juego actual
       setActualGameId(gameId);
-
-      // Conectar al WebSocket
       connectWebSocket(gameId);
     };
 
     initializeGame();
-  }, [idPartida, idUsuario, navigate, createGame, connectWebSocket]);
 
-  // Cleanup effect
-  useEffect(() => {
     return () => {
-      // Clear reconnection timeout
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
       }
-      
-      // Close WebSocket connection
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+      }
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
       }
     };
-  }, []);
+  }, [idPartida, idUsuario, navigate, createGame, connectWebSocket]);
+
+  // Handle explicit leave action
+  const handleLeaveGame = () => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'leave',
+        idPartida: parseInt(actualGameId || idPartida),
+        idUsuario: parseInt(idUsuario),
+      }));
+    }
+    navigate('/usuario/home');
+  };
 
   const handleClick = (index) => {
     if (board[index] || winner || gameStatus !== 'playing') return;
     if ((isXNext && idUsuario !== player1.id) || (!isXNext && idUsuario !== player2.id)) return;
 
     const currentGameId = actualGameId || idPartida;
-    
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ 
         type: 'move', 
@@ -302,13 +266,9 @@ const TicTacToe = () => {
       newMessage.trim() &&
       wsRef.current &&
       wsRef.current.readyState === WebSocket.OPEN &&
-      currentUserData &&
-      currentUserData.id &&
-      currentUserData.name &&
-      currentUserData.picture
+      currentUserData
     ) {
       const currentGameId = actualGameId || idPartida;
-      
       const message = {
         text: newMessage,
         user: currentUserData.name,
@@ -322,10 +282,9 @@ const TicTacToe = () => {
         message 
       }));
       setNewMessage('');
-    } else if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+    } else {
       setError('Connection lost. Please try again.');
-      const currentGameId = actualGameId || idPartida;
-      connectWebSocket(currentGameId);
+      connectWebSocket(actualGameId || idPartida);
     }
   };
 
@@ -363,7 +322,6 @@ const TicTacToe = () => {
   const currentGameId = actualGameId || idPartida;
   const connectionStatus = getConnectionStatus();
 
-  // Mostrar loading si está creando el juego
   if (isCreatingGame) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-900 flex items-center justify-center">
@@ -372,8 +330,7 @@ const TicTacToe = () => {
     );
   }
 
-  // Mostrar FetchWithGif si el jugador 2 se está conectando
-  if (showLoadingForPlayer2 && idPartida) {
+  if (showLoadingForPlayer2 && idPartida && gameStatus === 'waiting') {
     return <FetchWithGif />;
   }
 
@@ -381,9 +338,7 @@ const TicTacToe = () => {
     <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-900 flex flex-col items-center justify-center p-4">
       <HeaderGame />
       <div className="w-full max-w-5xl mx-auto mt-20 bg-blue-800 rounded-lg shadow-lg p-6 flex flex-col md:flex-row gap-6">
-        {/* Game Board Section */}
         <div className="flex-1 max-w-md mx-auto md:max-w-lg">
-          {/* Connection Status */}
           <div className="text-center mb-4">
             <div className={`inline-block px-3 py-1 rounded-full text-sm font-bold ${
               connectionStatus === 'Conectado' ? 'bg-green-500 text-white' : 
@@ -394,14 +349,12 @@ const TicTacToe = () => {
             </div>
           </div>
 
-          {/* Error Display */}
           {error && (
             <div className="mb-4 p-3 bg-red-500 text-white rounded-lg text-center">
               {error}
             </div>
           )}
 
-          {/* Players Info with Symbols */}
           <div className="flex justify-between items-center mb-4">
             <div className="flex items-center gap-3 bg-blue-700 rounded-lg p-3">
               <img src={player1.picture} alt="Player 1" className="w-12 h-12 rounded-full" />
@@ -424,7 +377,6 @@ const TicTacToe = () => {
             </div>
           </div>
 
-          {/* Current User Symbol Display */}
           {gameStatus === 'playing' && (
             <div className="text-center mb-4 bg-blue-700 rounded-lg p-3">
               <div className="flex items-center justify-center gap-2 text-white">
@@ -438,7 +390,6 @@ const TicTacToe = () => {
             {board.map((_, index) => renderSquare(index))}
           </div>
 
-          {/* Game Status */}
           <div className="text-center text-white text-xl mb-4">
             {gameStatus === 'waiting' && 'Esperando a que un amigo se una...'}
             {gameStatus === 'playing' && !winner && currentTurn && (
@@ -460,10 +411,10 @@ const TicTacToe = () => {
 
           <div className="flex gap-2">
             <button
-              className="flex-1 bg-gray-500 text-white py-2 rounded hover:bg-gray-400 transition"
-              onClick={() => navigate('/usuario/home')}
+              className="flex-1 bg-red-500 text-white py-2 rounded hover:bg-red-400 transition"
+              onClick={handleLeaveGame}
             >
-              Volver al Inicio
+              Abandonar Partida
             </button>
             {connectionStatus === 'Desconectado' && (
               <button
@@ -477,50 +428,22 @@ const TicTacToe = () => {
           </div>
         </div>
 
-        {/* Chat Section */}
         <div className="w-full md:w-80 bg-blue-900 rounded-lg p-4 flex flex-col max-h-80 md:min-h-[400px] md:max-h-[480px]">
           <h3 className="text-white text-lg font-bold mb-4">Chat en Tiempo Real</h3>
           <div className="flex flex-col flex-1 min-h-0">
             <div className="flex-1 overflow-y-auto mb-4 space-y-3">
               {messages.map((msg, index) => {
-                if (
-                  !msg ||
-                  typeof msg !== 'object' ||
-                  !msg.text ||
-                  !msg.user ||
-                  !msg.userId ||
-                  !msg.picture ||
-                  !msg.timestamp
-                ) {
-                  console.warn('Skipping invalid message:', msg);
+                if (!msg || !msg.text || !msg.user || !msg.userId || !msg.picture || !msg.timestamp) {
                   return null;
                 }
-
                 const isMyMessage = msg.userId === parseInt(idUsuario);
                 return (
-                  <div
-                    key={index}
-                    className={`flex ${isMyMessage ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`flex items-start gap-2 max-w-[80%] ${
-                        isMyMessage ? 'flex-row-reverse' : 'flex-row'
-                      }`}
-                    >
-                      <img
-                        src={msg.picture}
-                        alt={msg.user}
-                        className="w-8 h-8 rounded-full flex-shrink-0"
-                      />
-                      <div
-                        className={`flex flex-col ${isMyMessage ? 'items-end' : 'items-start'}`}
-                      >
+                  <div key={index} className={`flex ${isMyMessage ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`flex items-start gap-2 max-w-[80%] ${isMyMessage ? 'flex-row-reverse' : 'flex-row'}`}>
+                      <img src={msg.picture} alt={msg.user} className="w-8 h-8 rounded-full flex-shrink-0" />
+                      <div className={`flex flex-col ${isMyMessage ? 'items-end' : 'items-start'}`}>
                         <span className="text-blue-300 text-xs mb-1">{msg.user}</span>
-                        <div
-                          className={`rounded-lg px-3 py-2 ${
-                            isMyMessage ? 'bg-blue-600 text-white' : 'bg-blue-800 text-white'
-                          }`}
-                        >
+                        <div className={`rounded-lg px-3 py-2 ${isMyMessage ? 'bg-blue-600 text-white' : 'bg-blue-800 text-white'}`}>
                           <p className="text-sm">{msg.text}</p>
                         </div>
                       </div>
