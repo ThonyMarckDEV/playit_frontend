@@ -196,10 +196,22 @@ const PingPong = () => {
 
         if (data.type === 'update') {
           setGameState(data.gameState);
-          if (data.event === 'hit') {
+          if (data.event === 'hit' && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             playSound('hit');
+            // Request speed increase after paddle hit
+            wsRef.current.send(JSON.stringify({
+              type: 'speedUp',
+              idPartida: parseInt(actualGameId || idPartida),
+              idUsuario: parseInt(idUsuario),
+            }));
           } else if (data.event === 'score') {
             playSound('score');
+            // Request speed increase after score
+            wsRef.current.send(JSON.stringify({
+              type: 'speedUp',
+              idPartida: parseInt(actualGameId || idPartida),
+              idUsuario: parseInt(idUsuario),
+            }));
           }
         }
 
@@ -243,7 +255,7 @@ const PingPong = () => {
         setError('Error processing game data');
       }
     },
-    [idUsuario, navigate, isChatExpanded, isCurrentUserPlayer1, soundEnabled]
+    [idUsuario, navigate, isChatExpanded, isCurrentUserPlayer1, soundEnabled, actualGameId, idPartida]
   );
 
   const connectWebSocket = useCallback(
@@ -472,7 +484,7 @@ const PingPong = () => {
 
   const getCurrentTurnInfo = () => {
     return {
-      player: { name: 'Both Players' }, // Placeholder for real-time game
+      player: { name: 'Both Players' },
       symbol: gameStatus === 'playing' ? 'Playing' : gameStatus === 'waiting' ? 'Waiting' : 'Finished',
     };
   };
@@ -482,6 +494,15 @@ const PingPong = () => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return 'Desconectado';
     return 'Conectado';
   };
+
+  useEffect(() => {
+    // Attempt to lock orientation to landscape on mobile devices
+    if (window.screen.orientation && window.screen.orientation.lock) {
+      window.screen.orientation.lock('landscape').catch((err) => {
+        console.log('Orientation lock failed:', err);
+      });
+    }
+  }, []);
 
   const displayPlayers = getDisplayPlayers();
   const currentTurn = getCurrentTurnInfo();
@@ -502,15 +523,83 @@ const PingPong = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-900 flex flex-col">
+      <style>
+        {`
+          @media (max-width: 767px) and (orientation: portrait) {
+            .game-container {
+              display: none;
+            }
+            .rotate-prompt {
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              height: 100vh;
+              background: #1e3a8a;
+              color: white;
+              text-align: center;
+              padding: 1rem;
+            }
+            .rotate-prompt p {
+              font-size: 1.5rem;
+              margin-bottom: 1rem;
+            }
+            .rotate-prompt svg {
+              width: 50px;
+              height: 50px;
+              animation: rotate 2s infinite linear;
+            }
+            @keyframes rotate {
+              from {
+                transform: rotate(0deg);
+              }
+              to {
+                transform: rotate(360deg);
+              }
+            }
+          }
+          @media (min-width: 768px) or (orientation: landscape) {
+            .rotate-prompt {
+              display: none;
+            }
+            .game-container {
+              display: flex;
+            }
+          }
+          .canvas-container {
+            width: 100%;
+            max-width: 800px;
+            aspect-ratio: 2 / 1;
+            overflow: hidden;
+            background: black;
+          }
+          canvas {
+            width: 100% !important;
+            height: 100% !important;
+          }
+        `}
+      </style>
       <HeaderGame />
-      <div className="flex-1 flex flex-col md:flex-row p-4 mt-16 md:mt-20 gap-4">
+      <div className="rotate-prompt">
+        <p>Please rotate your device to landscape mode to play.</p>
+        <svg viewBox="0 0 24 24" fill="white">
+          <path d="M19 7h-3V2H5v20h14v-5h-3V9h3V7zm-2 5h-3v3h-2V5h3v2H5v10h12V12z" />
+        </svg>
+      </div>
+      <div className="game-container flex-1 flex flex-col md:flex-row p-4 mt-16 md:mt-20 gap-4">
         <div className="flex-1 flex flex-col items-center justify-center">
-          <div className="w-full max-w-2xl bg-blue-800 rounded-lg shadow-lg p-4 sm:p-6">
+          <div className="w-full max-w-4xl bg-blue-800 rounded-lg shadow-lg p-4 sm:p-6">
             <ConnectionStatus connectionStatus={connectionStatus} soundEnabled={soundEnabled} toggleSound={toggleSound} />
             {error && <div className="mb-4 p-3 bg-red-500 text-white rounded-lg text-center">{error}</div>}
             <PlayerInfo displayPlayers={displayPlayers} gameStatus={gameStatus} currentUserSymbol={currentUserSymbol} />
-            <div ref={canvasRef} className="w-full h-[400px] bg-black"></div>
-            <GameStatus gameStatus={gameStatus} winner={winner} currentTurn={currentTurn} getWinnerName={getWinnerName} />
+            <div className="canvas-container" ref={canvasRef}></div>
+            <GameStatus
+              gameStatus={gameStatus}
+              winner={winner}
+              currentTurn={currentTurn}
+              getWinnerName={getWinnerName}
+              gameType="pingpong"
+            />
             <div className="flex flex-col sm:flex-row gap-2">
               <button
                 className="flex-1 bg-red-500 text-white py-2 px-4 rounded hover:bg-red-400 transition text-sm sm:text-base"
