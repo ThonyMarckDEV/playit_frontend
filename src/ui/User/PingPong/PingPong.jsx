@@ -10,7 +10,6 @@ import GameStatus from '../../Reutilizables/Games/GameStatus';
 import ChatSection from '../../Reutilizables/Games/ChatSection';
 import MobileChat from '../../Reutilizables/Games/MobileChat';
 import ConnectionStatus from '../../Reutilizables/Games/ConnectionStatus';
-import defaultUserImage from '../../../assets/user.jpg';
 
 const PingPong = () => {
   const navigate = useNavigate();
@@ -27,16 +26,8 @@ const PingPong = () => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [ws, setWs] = useState(null);
-  const [player1, setPlayer1] = useState({
-    id: null,
-    name: 'Player 1',
-    picture: defaultUserImage,
-  });
-  const [player2, setPlayer2] = useState({
-    id: null,
-    name: 'Opponent',
-    picture: defaultUserImage,
-  });
+  const [player1, setPlayer1] = useState({ id: null, name: 'Player 1', picture: 'https://placehold.co/50x50' });
+  const [player2, setPlayer2] = useState({ id: null, name: 'Opponent', picture: 'https://placehold.co/50x50' });
   const [currentUserData, setCurrentUserData] = useState(null);
   const [isCreatingGame, setIsCreatingGame] = useState(false);
   const [error, setError] = useState(null);
@@ -176,12 +167,12 @@ const PingPong = () => {
         }
 
         if (data.type === 'playerData') {
-          setPlayer1({ ...data.player1, picture: data.player1.picture || defaultUserImage });
-          setPlayer2({ ...data.player2, picture: data.player2.picture || defaultUserImage });
+          setPlayer1({ ...data.player1, picture: data.player1.picture || 'https://placehold.co/50x50' });
+          setPlayer2({ ...data.player2, picture: data.player2.picture || 'https://placehold.co/50x50' });
           if (idUsuario === data.player1.id) {
-            setCurrentUserData({ ...data.player1, picture: data.player1.picture || defaultUserImage });
+            setCurrentUserData({ ...data.player1, picture: data.player1.picture || 'https://placehold.co/50x50' });
           } else if (idUsuario === data.player2.id) {
-            setCurrentUserData({ ...data.player2, picture: data.player2.picture || defaultUserImage });
+            setCurrentUserData({ ...data.player2, picture: data.player2.picture || 'https://placehold.co/50x50' });
             setShowLoadingForPlayer2(false);
           }
         }
@@ -217,7 +208,7 @@ const PingPong = () => {
 
         if (data.type === 'chat') {
           if (data.message && data.message.text && data.message.user && data.message.userId && data.message.timestamp) {
-            setMessages((prev) => [...prev, { ...data.message, picture: data.message.picture || defaultUserImage }]);
+            setMessages((prev) => [...prev, { ...data.message, picture: data.message.picture || 'https://placehold.co/50x50' }]);
             if (!isChatExpanded && window.innerWidth < 768) {
               setUnreadMessages((prev) => prev + 1);
             }
@@ -452,7 +443,7 @@ const PingPong = () => {
         text: newMessage,
         user: currentUserData.name,
         userId: currentUserData.id,
-        picture: currentUserData.picture || defaultUserImage,
+        picture: currentUserData.picture || 'https://placehold.co/50x50',
         timestamp: new Date().toISOString(),
       };
       wsRef.current.send(JSON.stringify({ type: 'chat', idPartida: parseInt(currentGameId), message }));
