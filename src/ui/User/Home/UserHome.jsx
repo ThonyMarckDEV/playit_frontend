@@ -22,11 +22,8 @@ const UserHome = () => {
 
   const games = [
     { id: 1, name: 'Triki', icon: '⚡', players: '1-2', difficulty: 'Fácil', color: 'from-blue-500 to-cyan-600', route: '/usuario/game/tictactoe' },
-    { id: 2, name: 'Memoria', icon: '🧠', players: '1', difficulty: 'Medio', color: 'from-blue-600 to-blue-800', route: '/memory' },
-    { id: 3, name: 'Conecta 4', icon: '🔴', players: '2', difficulty: 'Medio', color: 'from-blue-500 to-indigo-600', route: '/connect4' },
-    { id: 4, name: 'Puzzle', icon: '🧩', players: '1', difficulty: 'Difícil', color: 'from-blue-500 to-blue-700', route: '/puzzle' },
-    { id: 5, name: 'Palabras', icon: '📝', players: '1-4', difficulty: 'Medio', color: 'from-blue-400 to-cyan-500', route: '/words' },
-    { id: 6, name: 'Matemáticas', icon: '🔢', players: '1', difficulty: 'Fácil', color: 'from-blue-500 to-teal-600', route: '/math' },
+    { id: 2, name: 'Ping Pong', icon: '🏓', players: '2', difficulty: 'Medio', color: 'from-blue-500 to-indigo-600', route: '/usuario/game/pingpong' },
+    { id: 3, name: 'Battleship', icon: '🚢', players: '2', difficulty: 'Medio', color: 'from-blue-600 to-teal-600', route: '/usuario/game/battleship' },
   ];
 
   const stats = [

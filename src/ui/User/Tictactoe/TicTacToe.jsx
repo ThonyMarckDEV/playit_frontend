@@ -20,8 +20,8 @@ const TicTacToe = () => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [ws, setWs] = useState(null);
-  const [player1, setPlayer1] = useState({ id: null, name: 'Player 1', picture: 'https://static.vecteezy.com/system/resources/previews/014/767/688/non_2x/poeple-or-user-profile-icon-on-white-background-illustration-eps-10-vector.jpg' });
-  const [player2, setPlayer2] = useState({ id: null, name: 'Opponent', picture: 'https://static.vecteezy.com/system/resources/previews/014/767/688/non_2x/poeple-or-user-profile-icon-on-white-background-illustration-eps-10-vector.jpg' });
+  const [player1, setPlayer1] = useState({ id: null, name: 'Player 1', picture: 'https://placehold.co/50x50' });
+  const [player2, setPlayer2] = useState({ id: null, name: 'Opponent', picture: 'https://placehold.co/50x50' });
   const [gameStatus, setGameStatus] = useState('waiting');
   const [currentUserData, setCurrentUserData] = useState(null);
   const [isCreatingGame, setIsCreatingGame] = useState(false);
